@@ -1,0 +1,25 @@
+[package]
+name = "sd-test"
+version = "0.1.0"
+authors = ["Alex Halemba <alex-halemba@gmx.de>"]
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+cortex-m = "0.7.3"
+cortex-m-rt = "0.7.1"
+embedded-hal = "0.2.3"
+teensy4-panic = "0.2.1"
+teensy4-bsp = { version = "0.3.0", features = ["rt"] }
+log = "0.4.11"
+nb = "1.0.0"
+
+# Don't optimize build dependencies, like proc macros.
+# Helps with build times.
+[profile.release.build-override]
+opt-level = 0
+
+[features]
+default = []
+save_memory = []
