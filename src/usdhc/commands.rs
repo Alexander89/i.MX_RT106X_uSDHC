@@ -1,12 +1,71 @@
+pub trait SdCommand {
+    const CMD: u32;
+    const RESPONSE: Response;
+    const TYPE: CommandType;
+    const APP_CMD: bool = false;
+
+    fn mk_args(&self) -> u32;
+    #[inline]
+    fn mk_xfer(&self) -> u32 {
+        let resp_flags: u32 = Self::RESPONSE.into();
+        resp_flags | (Self::CMD << 24)
+    }
+    #[inline]
+    fn req_app_cmd(&self) -> bool {
+        Self::APP_CMD
+    }
+}
+
+#[derive(Clone, Copy)]
+pub enum Command {
+    Bc(BcCommand),
+    Bcr(BcrCommand),
+    Ac(AcCommand),
+    Adtc(AdtcCommand),
+    Acmd(ACmd),
+}
+
+pub enum CommandType {
+    Broadcast,
+    BroadcastWithReturn,
+    AddressedCommand,
+    AddressedDataTransferCommand,
+}
+pub enum Response {
+    None,
+    R1,
+    R1b,
+    R2,
+    R3,
+    R4,
+    R5,
+    R5b,
+    R6,
+}
+
+impl Into<u32> for Response {
+    #[inline]
+    fn into(self) -> u32 {
+        match self {
+            Response::None => 0,
+            Response::R2 => 0b0101 << 16,
+            Response::R3 | Response::R4 => 0b0010 << 16,
+            Response::R1 | Response::R5 | Response::R6 => 0x1110 << 16,
+            Response::R1b | Response::R5b => 0b1111 << 16,
+        }
+    }
+}
+
+#[derive(Clone, Copy)]
 /// Broadcast commands (bc), no response
-enum BcCommands {
+pub enum BcCommand {
     /// ## CMD0
     ///
     /// Resets all MMC and SD memory cards to idle state.
     ///
     /// ## Arguments:
     /// [31:0] stuff bits
-    GoIdleState = 1,
+    GoIdleState = 0,
     /// ## CMD4
     ///
     /// Programs the DSR of all cards.
@@ -27,8 +86,9 @@ enum BcCommands {
     IoSendOpCond = 5,
 }
 
+#[derive(Clone, Copy)]
 /// Broadcast commands with response (bcr), response from all cards simultaneously
-enum BcrCommands {
+pub enum BcrCommand {
     /// ## CMD1
     ///
     /// Asks all MMC and SD Memory cards in idle state to
@@ -60,8 +120,10 @@ enum BcrCommands {
     IoSendOpCond = 40,
 }
 
+#[non_exhaustive]
+#[derive(Clone, Copy)]
 /// Addressed (point-to-point) commands (ac), no data transfer on the DATA
-enum AcCommands {
+pub enum AcCommand {
     /// ## CMD3
     ///
     /// Assigns relative address to the card.
@@ -299,8 +361,9 @@ enum AcCommands {
     AppCmd = 55,
 }
 
+#[derive(Clone, Copy)]
 /// Addressed (point-to-point) data transfer commands (adtc)
-enum AdtcCommands {
+pub enum AdtcCommand {
     /// ## CMD6
     ///
     /// # Note:
@@ -487,9 +550,10 @@ enum AdtcCommands {
     RwMultipleBlock = 61,
 }
 
+#[derive(Clone, Copy)]
 /// ACMDs is preceded with the APP_CMD command. Commands listed are used for SD only,
 /// other SD commands not listed are not supported on this module.
-enum ACmds {
+pub enum ACmd {
     /// ## ACMD6
     ///
     /// **Type:** ac
@@ -577,4 +641,374 @@ enum ACmds {
     ///
     /// response type: R1
     SendScr = 51,
+}
+
+/// ## CMD0
+///
+/// Resets all MMC and SD memory cards to idle state.
+///
+/// ## Arguments:
+/// [31:0] stuff bits
+pub struct GoIdleState(());
+
+impl GoIdleState {
+    pub fn new() -> Self {
+        Self(())
+    }
+}
+
+impl SdCommand for GoIdleState {
+    const CMD: u32 = 0;
+    const RESPONSE: Response = Response::None;
+    const TYPE: CommandType = CommandType::Broadcast;
+
+    fn mk_args(&self) -> u32 {
+        0
+    }
+}
+
+/// ## CMD1
+///
+/// Asks all MMC and SD Memory cards in idle state to
+/// send their operation conditions register contents in
+/// the response on the CMD line.
+///
+/// ## Arguments:
+/// [31:0] OCR without busy
+///
+/// response type: R3
+pub struct SendOpCond(u32);
+
+impl SendOpCond {
+    pub fn new(orc: u32) -> Self {
+        Self(orc)
+    }
+}
+
+impl SdCommand for SendOpCond {
+    const CMD: u32 = 1;
+    const RESPONSE: Response = Response::R3;
+    const TYPE: CommandType = CommandType::BroadcastWithReturn;
+
+    fn mk_args(&self) -> u32 {
+        self.0
+    }
+}
+
+/// ## CMD2
+///
+/// Asks all cards to send their CID numbers on the CMD line.
+///
+/// ## Arguments:
+/// [31:0] stuff bits
+///
+/// response type: R2
+pub struct AllSendCid(());
+
+impl AllSendCid {
+    pub fn new() -> Self {
+        Self(())
+    }
+}
+
+impl SdCommand for AllSendCid {
+    const CMD: u32 = 2;
+    const RESPONSE: Response = Response::R2;
+    const TYPE: CommandType = CommandType::BroadcastWithReturn;
+
+    fn mk_args(&self) -> u32 {
+        0
+    }
+}
+
+/// ## CMD3
+///
+/// Assigns relative address to the card.
+///
+/// ## Arguments:
+/// [31:16] RCA
+/// [15:0] stuff bits
+///
+/// response type: R1 / R6 (SDIO)
+pub struct SetSendRelativeAddr(u32);
+
+impl SetSendRelativeAddr {
+    pub fn new(rca: u16) -> Self {
+        Self(rca as u32)
+    }
+}
+
+impl SdCommand for SetSendRelativeAddr {
+    const CMD: u32 = 3;
+    const RESPONSE: Response = Response::R1;
+    const TYPE: CommandType = CommandType::AddressedCommand;
+
+    fn mk_args(&self) -> u32 {
+        self.0 << 16
+    }
+}
+
+/// ## CMD6
+///
+/// # Note:
+///   CMD6 differs completely between high-speed MMC cards and high-speed SD cards.
+///   This Command SWITCH_FUNC is for **high-speed SD** cards.
+///
+/// Checks switch ability (mode 0) and switch card function (mode 1).
+/// Refer to "SD Physical Specification V1.1" for more details.
+///
+/// ## Arguments:
+/// [31] Mode:  0: Check function 1: Switch function
+/// [30:8] Reserved for function groups 6 ~ 3 (All 0 or 0xFFFF)
+/// [7:4] Function group1 for command system
+/// [3:0] Function group2 for access mode
+///
+/// response type: R1
+pub struct SwitchFunc(bool, u32, u32);
+
+impl SwitchFunc {
+    pub fn new(mode: bool, command_system: u8, access_mode: u8) -> Self {
+        Self(mode, command_system as u32, access_mode as u32)
+    }
+}
+
+impl SdCommand for SwitchFunc {
+    const CMD: u32 = 6;
+    const RESPONSE: Response = Response::R1;
+    const TYPE: CommandType = CommandType::AddressedDataTransferCommand;
+
+    fn mk_args(&self) -> u32 {
+        (if self.0 { 0x8000_0000 } else { 0x0000_0000 })
+            & ((self.1 & 0b0111) << 4)
+            & (self.2 & 0b0111)
+    }
+}
+
+/// ## ACMD6
+///
+/// **Type:** ac
+///
+/// Defines the data bus width ('00'=1bit or '10'=4bit bus) to be used for
+/// data transfer. The allowed data bus widths are given in SCR register.
+///
+/// ## Arguments:
+/// [31:2] stuff bits
+/// [1:0] bus width
+///
+/// response type: R1
+pub struct SetBusWidth(u32);
+
+impl SetBusWidth {
+    pub fn new(width: u8) -> Self {
+        Self(width as u32)
+    }
+}
+
+impl SdCommand for SetBusWidth {
+    const CMD: u32 = 6;
+    const RESPONSE: Response = Response::R1;
+    const TYPE: CommandType = CommandType::AddressedCommand;
+    const APP_CMD: bool = true;
+
+    fn mk_args(&self) -> u32 {
+        self.0
+    }
+}
+
+/// ## CMD7
+///
+/// Toggles a card between the stand- by and transfer states or between
+/// the programming and disconnect states. In both cases, the card is selected
+/// by its own relative address and gets deselected by any other address.
+/// Address 0 deselects all.
+///
+/// ## Arguments:
+/// [31:16] RCA
+/// [15:0] stuff bits
+///
+/// response type: R1b
+pub struct SelectDeselectCard(u32);
+
+impl SelectDeselectCard {
+    pub fn new(rca: u16) -> Self {
+        Self(rca as u32)
+    }
+}
+
+impl SdCommand for SelectDeselectCard {
+    const CMD: u32 = 7;
+    const RESPONSE: Response = Response::R1b;
+    const TYPE: CommandType = CommandType::AddressedCommand;
+
+    fn mk_args(&self) -> u32 {
+        self.0 << 16
+    }
+}
+
+/// ## CMD8
+///
+/// The card sends its EXT_CSD register as a block of data, with
+/// a block size of 512 bytes.
+///
+/// ## Arguments:
+/// [31:0] stuff bits
+///
+/// response type: R1
+pub struct SendExtCsd(());
+
+impl SendExtCsd {
+    pub fn new() -> Self {
+        Self(())
+    }
+}
+
+impl SdCommand for SendExtCsd {
+    const CMD: u32 = 8;
+    const RESPONSE: Response = Response::R1;
+    const TYPE: CommandType = CommandType::BroadcastWithReturn;
+
+    fn mk_args(&self) -> u32 {
+        0x01aa
+    }
+}
+
+/// ## CMD9
+///
+/// Addressed card sends its card-specific data (CSD) on the CMD line.
+///
+/// ## Arguments:
+/// [31:16] RCA
+/// [15:0] stuff bits
+///
+/// response type: R2
+pub struct SendCsd(u32);
+
+impl SendCsd {
+    pub fn new(rca: u16) -> Self {
+        Self(rca as u32)
+    }
+}
+
+impl SdCommand for SendCsd {
+    const CMD: u32 = 9;
+    const RESPONSE: Response = Response::R1;
+    const TYPE: CommandType = CommandType::AddressedCommand;
+
+    fn mk_args(&self) -> u32 {
+        self.0 << 16
+    }
+}
+
+/// ## CMD10
+///
+/// Addressed card sends its card-identification (CID) on the CMD line.
+///
+/// ## Arguments:
+/// [31:16] RCA
+/// [15:0] stuff bits
+///
+/// response type: R2
+pub struct SendCid(u32);
+
+impl SendCid {
+    pub fn new(rca: u16) -> Self {
+        Self(rca as u32)
+    }
+}
+
+impl SdCommand for SendCid {
+    const CMD: u32 = 10;
+    const RESPONSE: Response = Response::R1;
+    const TYPE: CommandType = CommandType::AddressedCommand;
+
+    fn mk_args(&self) -> u32 {
+        self.0 << 16
+    }
+}
+
+/// ## CMD13
+///
+/// Addressed card sends its status register.
+///
+/// ## Arguments:
+/// [31:16] RCA
+/// [15:0] stuff bits
+///
+/// response type: R1b
+pub struct SendStatus(u32);
+
+impl SendStatus {
+    pub fn new(rca: u16) -> Self {
+        Self(rca as u32)
+    }
+}
+
+impl SdCommand for SendStatus {
+    const CMD: u32 = 13;
+    const RESPONSE: Response = Response::R1b;
+    const TYPE: CommandType = CommandType::AddressedCommand;
+
+    fn mk_args(&self) -> u32 {
+        self.0 << 16
+    }
+}
+
+/// ## ACMD41
+///
+/// **Type:** bcr
+///
+/// Asks all SDIO cards in idle state to
+/// send them operation conditions
+/// register contents in the response
+/// on the CMD line.
+///
+/// ## Arguments:
+/// [31:0] OCR
+///
+/// response type: R3
+pub struct SdAppOpCond(u32);
+
+impl SdAppOpCond {
+    pub fn new(orc: u32) -> Self {
+        Self(orc)
+    }
+}
+
+impl SdCommand for SdAppOpCond {
+    const CMD: u32 = 41;
+    const RESPONSE: Response = Response::R3;
+    const TYPE: CommandType = CommandType::BroadcastWithReturn;
+    const APP_CMD: bool = true;
+
+    fn mk_args(&self) -> u32 {
+        self.0
+    }
+}
+
+/// ## CMD55
+///
+/// Indicates to the card that the next command is an application specific
+/// command rather than a standard command.
+///
+/// ## Arguments:
+/// [31:16] RCA
+/// [15:0] stuff bits
+///
+/// response type: R1
+pub struct AppCmd(u32);
+
+impl AppCmd {
+    pub fn new(rca: u16) -> Self {
+        Self(rca as u32)
+    }
+}
+
+impl SdCommand for AppCmd {
+    const CMD: u32 = 55;
+    const RESPONSE: Response = Response::R1;
+    const TYPE: CommandType = CommandType::AddressedCommand;
+
+    fn mk_args(&self) -> u32 {
+        self.0 << 16
+    }
 }

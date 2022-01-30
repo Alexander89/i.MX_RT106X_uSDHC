@@ -1,3 +1,4 @@
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
 /// The uSDHC module can select the following modes for data transfer
 ///
 /// ### NOTE:
@@ -6,7 +7,8 @@
 /// maximum clock frequency. However, these may be specific to
 /// the device. See the corresponding chip-specific information or
 /// the device data sheet for accurate details.
-pub enum TransferMode {
+pub enum CardMode {
+    Unknown,
     /// SD 1-bit
     Sd1,
     /// SD 4-bit
@@ -35,3 +37,9 @@ pub enum TransferMode {
     /// up to 50 MHz in the DDR mode)
     SdSdioUhsI,
 }
+
+pub const SD_MAX_INIT_RATE_HZ: u32 = 400_000;
+pub const SD_MAX_MMC_FULL_SPEED_RATE_HZ: u32 = 26_000_000;
+pub const SD_MAX_MMC_HIGH_SPEED_RATE_HZ: u32 = 52_000_000;
+pub const SD_MAX_MMC_HS200_RATE_HZ: u32 = 200_000_000;
+pub const SD_MAX_MMC_DDR_RATE_HZ: u32 = 52_000_000;

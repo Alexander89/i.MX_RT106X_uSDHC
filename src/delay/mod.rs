@@ -1,12 +1,9 @@
 //! Delays
 
 use bsp::hal::{
-    ccm::{perclk::Multiplexer, Handle, IPGFrequency},
-    gpt::{Unclocked, GPT},
-    pit::{
-        channel::{_0, _1, _2, _3},
-        UnclockedPIT, PIT,
-    },
+    ccm::{Handle, IPGFrequency},
+    gpt::GPT,
+    pit::{channel::_3, PIT},
 };
 use embedded_hal::{
     blocking::delay::{DelayMs, DelayUs},
@@ -16,47 +13,22 @@ use teensy4_bsp as bsp;
 
 /// System timer (SysTick) as a delay provider
 pub struct Delay {
-    timer0: PIT<_0>,
-    timer1: PIT<_1>,
-    timer2: PIT<_2>,
-    timer3: PIT<_3>,
+    timer: PIT<_3>,
 }
 
 impl Delay {
     /// Configures the system timer (SysTick) as a delay provider
-    pub fn new(
-        handle: &mut Handle,
-        perclk: Multiplexer,
-        gpt: Unclocked,
-        pit: UnclockedPIT,
-        ipg_hz: IPGFrequency,
-    ) -> (GPT, Self) {
-        let mut cfg = perclk.configure(
-            handle,
-            bsp::hal::ccm::perclk::PODF::DIVIDE_3,
-            bsp::hal::ccm::perclk::CLKSEL::IPG(ipg_hz),
-        );
-        let mut gpt2 = gpt.clock(&mut cfg);
-        gpt2.set_mode(bsp::hal::gpt::Mode::FreeRunning);
-        gpt2.set_enable(true);
+    pub fn new(handle: &mut Handle, gpt: &mut GPT, timer: PIT<_3>) -> Self {
+        gpt.set_mode(bsp::hal::gpt::Mode::FreeRunning);
+        gpt.set_enable(true);
 
-        let (timer0, timer1, timer2, timer3) = pit.clock(&mut cfg);
-
-        (
-            gpt2,
-            Delay {
-                timer0,
-                timer1,
-                timer2,
-                timer3,
-            },
-        )
+        Delay { timer }
     }
 
     /// Releases the system timer (SysTick) resource
     #[allow(dead_code)]
-    pub fn free(self) -> (PIT<_0>, PIT<_1>, PIT<_2>, PIT<_3>) {
-        (self.timer0, self.timer1, self.timer2, self.timer3)
+    pub fn free(self) -> PIT<_3> {
+        self.timer
     }
 }
 
@@ -86,8 +58,8 @@ impl DelayMs<u8> for Delay {
 
 impl DelayUs<u64> for Delay {
     fn delay_us(&mut self, us: u64) {
-        self.timer3.start(core::time::Duration::from_micros(us));
-        nb::block!(self.timer3.wait()).unwrap();
+        self.timer.start(core::time::Duration::from_micros(us));
+        nb::block!(self.timer.wait()).unwrap();
     }
 }
 impl DelayUs<u32> for Delay {
