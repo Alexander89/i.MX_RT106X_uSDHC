@@ -7,12 +7,22 @@ pub trait SdCommand {
     fn mk_args(&self) -> u32;
     #[inline]
     fn mk_xfer(&self) -> u32 {
+        log::debug!("mk xfer");
+
         let resp_flags: u32 = Self::RESPONSE.into();
-        resp_flags | (Self::CMD << 24)
+
+        log::debug!("mk xfer {:32b}", resp_flags);
+        log::debug!("id {:32b}", self.cmd_id() << 24);
+        log::debug!("res {:32b}", resp_flags | (self.cmd_id() << 24));
+        resp_flags | (self.cmd_id() << 24)
     }
     #[inline]
     fn req_app_cmd(&self) -> bool {
         Self::APP_CMD
+    }
+    #[inline]
+    fn cmd_id(&self) -> u32 {
+        Self::CMD
     }
 }
 
@@ -48,10 +58,10 @@ impl Into<u32> for Response {
     fn into(self) -> u32 {
         match self {
             Response::None => 0,
-            Response::R2 => 0b0101 << 16,
-            Response::R3 | Response::R4 => 0b0010 << 16,
-            Response::R1 | Response::R5 | Response::R6 => 0x1110 << 16,
-            Response::R1b | Response::R5b => 0b1111 << 16,
+            Response::R2 => 0b01001u32 << 16,
+            Response::R3 | Response::R4 => 0b0010u32 << 16,
+            Response::R1 | Response::R5 | Response::R6 => 0b11010u32 << 16,
+            Response::R1b | Response::R5b => 0b11011u32 << 16,
         }
     }
 }
@@ -965,7 +975,7 @@ impl SdCommand for SendStatus {
 /// ## Arguments:
 /// [31:0] OCR
 ///
-/// response type: R3
+/// response type: R1
 pub struct SdAppOpCond(u32);
 
 impl SdAppOpCond {
@@ -1005,7 +1015,7 @@ impl AppCmd {
 
 impl SdCommand for AppCmd {
     const CMD: u32 = 55;
-    const RESPONSE: Response = Response::R1;
+    const RESPONSE: Response = Response::R3;
     const TYPE: CommandType = CommandType::AddressedCommand;
 
     fn mk_args(&self) -> u32 {

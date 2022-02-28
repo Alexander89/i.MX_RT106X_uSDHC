@@ -71,12 +71,12 @@ pub struct Uninitialized<M> {
 
 impl<M> Uninitialized<M> {
     pub fn new(usdhc: ral::usdhc::Instance) -> Self {
-        log::debug!("0 {:b}", ral::read_reg!(ral::usdhc, usdhc, PRES_STATE));
-        log::debug!("1 {:b}", ral::read_reg!(ral::usdhc, usdhc, SYS_CTRL));
-        log::debug!("2 {:b}", ral::read_reg!(ral::usdhc, usdhc, INT_STATUS));
-        log::debug!("3 {:b}", ral::read_reg!(ral::usdhc, usdhc, INT_STATUS_EN));
-        log::debug!("4 {:b}", ral::read_reg!(ral::usdhc, usdhc, INT_SIGNAL_EN));
-        log::debug!("5 {:b}", ral::read_reg!(ral::usdhc, usdhc, MIX_CTRL));
+        // log::debug!("0 {:b}", ral::read_reg!(ral::usdhc, usdhc, PRES_STATE));
+        // log::debug!("1 {:b}", ral::read_reg!(ral::usdhc, usdhc, SYS_CTRL));
+        // log::debug!("2 {:b}", ral::read_reg!(ral::usdhc, usdhc, INT_STATUS));
+        // log::debug!("3 {:b}", ral::read_reg!(ral::usdhc, usdhc, INT_STATUS_EN));
+        // log::debug!("4 {:b}", ral::read_reg!(ral::usdhc, usdhc, INT_SIGNAL_EN));
+        // log::debug!("5 {:b}", ral::read_reg!(ral::usdhc, usdhc, MIX_CTRL));
 
         Self {
             usdhc,
@@ -142,8 +142,9 @@ where
         D3: usdhc::Pin<Module = M, Signal = usdhc::Data3>,
     {
         ral::modify_reg!(ral::usdhc, self.usdhc_reg, MIX_CTRL, DTDSEL: 0);
+        let pins = USdhcPins::new(cmd, clk, d0, d1, d2, d3);
 
-        USdhc::new(self.usdhc_reg, USdhcPins::new(cmd, clk, d0, d1, d2, d3))
+        USdhc::new(self.usdhc_reg, pins)
     }
 }
 
@@ -231,7 +232,8 @@ where
     D2: usdhc::Pin<Module = M, Signal = usdhc::Data2>,
     D3: usdhc::Pin<Module = M, Signal = usdhc::Data3>,
 {
-    fn new(usdhc: ral::usdhc::Instance, pins: USdhcPins<M, CMD, CLK, D0, D1, D2, D3>) -> Self {
+    fn new(usdhc: ral::usdhc::Instance, mut pins: USdhcPins<M, CMD, CLK, D0, D1, D2, D3>) -> Self {
+        pins.enable();
         Self {
             usdhc,
             pins,
@@ -370,7 +372,7 @@ where
 
         /*
         // Disable GPIO clock.
-        enableGPIO(false);
+            (false);
 
         SDHC_MIX_CTRL |= 0x80000000;
 
@@ -391,8 +393,6 @@ where
         NVIC_SET_PRIORITY(IRQ_SDHC, 6*16);
         NVIC_ENABLE_IRQ(IRQ_SDHC);
         */
-
-        self.init_card();
     }
 
     pub fn enable_interrupts(&mut self) {
@@ -436,20 +436,13 @@ where
         while !self.is_command_comlete() {}
     }
 
-    pub fn set_command_v0(&mut self, cmd: commands::Command) -> bool {
-        match cmd {
-            commands::Command::Bc(c) => self.send_bc_command(c),
-            commands::Command::Bcr(c) => self.send_bcr_command(c),
-            commands::Command::Ac(_) => false,
-            commands::Command::Adtc(_) => false,
-            commands::Command::Acmd(_) => false,
-        }
-    }
-
-    pub fn set_command(&mut self, cmd: impl commands::SdCommand) -> bool {
+    pub fn send_command(&mut self, cmd: impl commands::SdCommand) -> bool {
         if cmd.req_app_cmd() {
-            self.set_command(commands::AppCmd::new(0));
+            log::debug!("send req app cmd");
+            // recursive call with AppCmd (CMD55)
+            self.send_command(commands::AppCmd::new(0));
         }
+        log::debug!("send cmd: {}", cmd.cmd_id());
 
         self.wait_for_card();
 
@@ -457,60 +450,25 @@ where
         ral::write_reg!(ral::usdhc, self.usdhc, CMD_XFR_TYP, cmd.mk_xfer());
 
         self.wait_for_command_complete();
+        self.wait_for_card();
 
-        let (cc, cce) = ral::read_reg!(ral::usdhc, self.usdhc, INT_STATUS, CC, CCE);
-        ral::modify_reg!(ral::usdhc, self.usdhc, INT_STATUS, CC: 0, CCE: 0);
-        return cc == 1 && cce == 0;
+        let (cc, cie, cebe, cce, ctoe) =
+            ral::read_reg!(ral::usdhc, self.usdhc, INT_STATUS, CC, CIE, CEBE, CCE, CTOE);
+        ral::modify_reg!(
+            ral::usdhc,
+            self.usdhc,
+            INT_STATUS,
+            CC: cc,
+            CIE: cie,
+            CEBE: cebe,
+            CCE: cce,
+            CTOE: ctoe
+        );
+        return (cc == 1) && (cie + cebe + cce + ctoe == 0);
     }
 
     pub fn read_response_u32(&self) -> u32 {
         ral::read_reg!(ral::usdhc, self.usdhc, CMD_RSP0)
-    }
-
-    pub fn send_bc_command(&mut self, c: BcCommand) -> bool {
-        self.wait_for_card();
-
-        ral::write_reg!(ral::usdhc, self.usdhc, CMD_ARG, 0);
-
-        ral::write_reg!(
-            ral::usdhc,
-            self.usdhc,
-            CMD_XFR_TYP,
-            RSPTYP: RSPTYP_0,
-            CCCEN: CCCEN_0,
-            CICEN: CICEN_0,
-            DPSEL: DPSEL_0,
-            CMDTYP: CMDTYP_0,
-            CMDINX: c as u32
-        );
-
-        self.wait_for_command_complete();
-
-        let (cc, cce) = ral::read_reg!(ral::usdhc, self.usdhc, INT_STATUS, CC, CCE);
-        return cc == 1 && cce == 0;
-    }
-
-    pub fn send_bcr_command(&mut self, c: BcrCommand) -> bool {
-        self.wait_for_card();
-
-        ral::write_reg!(ral::usdhc, self.usdhc, CMD_ARG, 0);
-
-        ral::write_reg!(
-            ral::usdhc,
-            self.usdhc,
-            CMD_XFR_TYP,
-            RSPTYP: RSPTYP_1,
-            CCCEN: CCCEN_1,
-            CICEN: CICEN_0,
-            DPSEL: DPSEL_0,
-            CMDTYP: CMDTYP_0,
-            CMDINX: c as u32
-        );
-
-        self.wait_for_command_complete();
-
-        let (cc, cce) = ral::read_reg!(ral::usdhc, self.usdhc, INT_STATUS, CC, CCE);
-        return cc == 1 && cce == 0;
     }
 
     pub fn init_card(&mut self) {
@@ -561,7 +519,8 @@ where
     }
 
     pub fn is_card_inserted(&mut self) -> bool {
-        ral::read_reg!(ral::usdhc, self.usdhc, PRES_STATE, CINST == CINST_1)
+        let dlsl = ral::read_reg!(ral::usdhc, self.usdhc, PRES_STATE, DLSL);
+        (dlsl & 0b001000) != 0
     }
 
     pub fn get_state(&mut self) -> u32 {
@@ -574,8 +533,10 @@ where
         ral::read_reg!(ral::usdhc, self.usdhc, PRES_STATE, CIHB == CIHB_1)
     }
     fn is_command_comlete(&mut self) -> bool {
-        let (cc, cce) = ral::read_reg!(ral::usdhc, self.usdhc, INT_STATUS, CC, CCE);
-        (cc == 1) || (cce == 1)
+        let (cc, cie, cebe, cce, ctoe) =
+            ral::read_reg!(ral::usdhc, self.usdhc, INT_STATUS, CC, CIE, CEBE, CCE, CTOE);
+
+        (cc + cie + cebe + cce + ctoe) == 0
     }
 
     // 1111_0111___1000_1000
